@@ -5,25 +5,34 @@
 #include "AppInsights.h"
 
 #define DEFAULT_POWER_MODE true
-const char *service_name = "PROV_ESP32";
-const char *pop = "esp32pop";
 
-// GPIO for push button
-#if CONFIG_IDF_TARGET_ESP32C3
-static int gpio_0 = 9;
-static int gpio_switch = 7;
-#else
-// GPIO for virtual device
-static int gpio_0 = 0;
-static int gpio_switch = 16;
-#endif
+const char *service_name = "PROV_PcSwitch";
+const char *pop = "PopPcSwitch";
 
-/* Variable for reading pin status*/
-bool switch_state = true;
+// Define switch and relay
+static int PcSwitch = 33;
+static int Relay = 27;
 
-// The framework provides some standard device types like switch, lightbulb,
-// fan, temperaturesensor.
+// Global switch state
+bool Switch_state = true;
+
+// Switch device
 static Switch *my_switch = NULL;
+
+void write_callback(Device *device, Param *param, const param_val_t val,
+                    void *priv_data, write_ctx_t *ctx)
+{
+    const char *device_name = device->getDeviceName();
+    const char *param_name = param->getParamName();
+
+    if (strcmp(param_name, "Power") == 0) {
+        Serial.printf("Received value = %s for %s - %s\n",
+                      val.val.b ? "true" : "false", device_name, param_name);
+        Switch_state = val.val.b;
+        powerComputer(Switch_state);
+        param->updateAndReport(val);
+    }
+}
 
 void sysProvEvent(arduino_event_t *sys_event)
 {
@@ -49,105 +58,108 @@ void sysProvEvent(arduino_event_t *sys_event)
     }
 }
 
-void write_callback(Device *device, Param *param, const param_val_t val,
-                    void *priv_data, write_ctx_t *ctx)
+// Code for power relay control
+void powerComputer(int state)
 {
-    const char *device_name = device->getDeviceName();
-    const char *param_name = param->getParamName();
-
-    if (strcmp(param_name, "Power") == 0) {
-        Serial.printf("Received value = %s for %s - %s\n",
-                      val.val.b ? "true" : "false", device_name, param_name);
-        switch_state = val.val.b;
-        (switch_state == false) ? digitalWrite(gpio_switch, LOW)
-        : digitalWrite(gpio_switch, HIGH);
-        param->updateAndReport(val);
+    if (state == 0) { // turn off pc
+        Serial.printf("Turn on pc\n");
+        digitalWrite(PcSwitch, LOW);
+        digitalWrite(Relay, HIGH);
+        delay(50);
+        digitalWrite(Relay, LOW);
+    }
+    else if (state == 2) { // force turn off pc
+        Serial.printf("Force off pc\n");
+        digitalWrite(PcSwitch, LOW);
+        digitalWrite(Relay, HIGH);
+        delay(4500);
+        digitalWrite(Relay, LOW);
+    }
+    else { // Turn on pc
+        Serial.printf("Turn off pc\n");
+        digitalWrite(PcSwitch, HIGH);
+        digitalWrite(Relay, HIGH);
+        delay(50);
+        digitalWrite(Relay, LOW);
     }
 }
 
 void setup()
 {
     Serial.begin(115200);
-    pinMode(gpio_0, INPUT);
-    pinMode(gpio_switch, OUTPUT);
-    digitalWrite(gpio_switch, DEFAULT_POWER_MODE);
+    pinMode(PcSwitch, INPUT_PULLUP);
+    pinMode(Relay, OUTPUT);
+    //digitalWrite(Relay, DEFAULT_POWER_MODE);
 
-    Node my_node;
-    my_node = RMaker.initNode("ESP RainMaker Node");
+    //---------- ESP RainMaker initialisation ---------
+        // node init
+        Node my_node;
+        my_node = RMaker.initNode("ESP RainMaker Node");
 
-    // Initialize switch device
-    my_switch = new Switch("Switch", &gpio_switch);
-    if (!my_switch) {
-        return;
-    }
-    // Standard switch device
-    my_switch->addCb(write_callback);
+        // Set switch device variable & node name
+        my_switch = new Switch("Computer", &PcSwitch);
+        if (!my_switch) {
+            return;
+        }
+        // Standard switch device
+        my_switch->addCb(write_callback);
 
-    // Add switch device to the node
-    my_node.addDevice(*my_switch);
+        // Add switch device to the node
+        my_node.addDevice(*my_switch);
 
-    // This is optional
-    RMaker.enableOTA(OTA_USING_TOPICS);
-    // If you want to enable scheduling, set time zone for your region using
-    // setTimeZone(). The list of available values are provided here
-    // https://rainmaker.espressif.com/docs/time-service.html
-    //  RMaker.setTimeZone("Asia/Shanghai");
-    //  Alternatively, enable the Timezone service and let the phone apps set the
-    //  appropriate timezone
-    RMaker.enableTZService();
+        // This is optional
+        RMaker.enableOTA(OTA_USING_TOPICS);
+        RMaker.enableTZService();
+        RMaker.enableSchedule();
+        RMaker.enableScenes();
+        // Enable ESP Insights. Insteads of using the default http transport, this function will
+        // reuse the existing MQTT connection of Rainmaker, thereby saving memory space.
+        initAppInsights();
+        RMaker.enableSystemService(SYSTEM_SERV_FLAGS_ALL, 2, 2, 2);
 
-    RMaker.enableSchedule();
-
-    RMaker.enableScenes();
-    // Enable ESP Insights. Insteads of using the default http transport, this function will
-    // reuse the existing MQTT connection of Rainmaker, thereby saving memory space.
-    initAppInsights();
-
-    RMaker.enableSystemService(SYSTEM_SERV_FLAGS_ALL, 2, 2, 2);
-
-    RMaker.start();
-
-    WiFi.onEvent(sysProvEvent);
-#if CONFIG_IDF_TARGET_ESP32S2
-    WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE,
-                            WIFI_PROV_SECURITY_1, pop, service_name);
-#else
-    WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM,
-                            WIFI_PROV_SECURITY_1, pop, service_name);
-#endif
+        RMaker.start();
+        // If wifi not provided, start provisioning
+        WiFi.onEvent(sysProvEvent);
+        #if CONFIG_IDF_TARGET_ESP32S2
+            WiFiProv.beginProvision(WIFI_PROV_SCHEME_SOFTAP, WIFI_PROV_SCHEME_HANDLER_NONE,
+                                    WIFI_PROV_SECURITY_1, pop, service_name);
+        #else
+            WiFiProv.beginProvision(WIFI_PROV_SCHEME_BLE, WIFI_PROV_SCHEME_HANDLER_FREE_BTDM,
+                                    WIFI_PROV_SECURITY_1, pop, service_name);
+        #endif
+    // -------------------------------------------------
 }
 
 void loop()
 {
-    if (digitalRead(gpio_0) == LOW) {  // Push button pressed
+    if (digitalRead(PcSwitch) == LOW) {  // Push button pressed
 
         // Key debounce handling
         delay(100);
         int startTime = millis();
-        while (digitalRead(gpio_0) == LOW) {
+        while (digitalRead(PcSwitch) == LOW) {
             delay(50);
         }
         int endTime = millis();
 
-        if ((endTime - startTime) > 10000) {
-            // If key pressed for more than 10secs, reset all
+        if ((endTime - startTime) > 20000){ // Key pressed for more then 20secs factory reset
             Serial.printf("Reset to factory.\n");
             RMakerFactoryReset(2);
-        } else if ((endTime - startTime) > 3000) {
+        } else if ((endTime - startTime) > 10000) { // Key pressed for more then 10secs rest wifi
             Serial.printf("Reset Wi-Fi.\n");
-            // If key pressed for more than 3secs, but less than 10, reset Wi-Fi
             RMakerWiFiReset(2);
-        } else {
-            // Toggle device state
-            switch_state = !switch_state;
-            Serial.printf("Toggle State to %s.\n", switch_state ? "true" : "false");
+        } else if ((endTime - startTime) > 3000) { // Key pressed for more then 3secs force shutoff
+            Serial.printf("Hard stop computer");
+            powerComputer(2);
+        } else { // Toggle between on and off state
+            Switch_state = !Switch_state;
+            Serial.printf("Toggle State to %s.\n", Switch_state ? "true" : "false");
             if (my_switch) {
                 my_switch->updateAndReportParam(ESP_RMAKER_DEF_POWER_NAME,
-                                                switch_state);
+                                                Switch_state);
             }
-            (switch_state == false) ? digitalWrite(gpio_switch, LOW)
-            : digitalWrite(gpio_switch, HIGH);
+            powerComputer(Switch_state);
         }
     }
-    delay(100);
+    delay(10);
 }
