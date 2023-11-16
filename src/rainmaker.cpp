@@ -4,13 +4,11 @@
 #include "WiFiProv.h"
 #include "AppInsights.h"
 
-#define DEFAULT_POWER_MODE true
-
 const char *service_name = "PROV_PcSwitch";
 const char *pop = "PopPcSwitch";
 
 // Define switch and relay
-static int PcSwitch = 33;
+static int PcSwitch = 34;
 static int Relay = 27;
 
 // Global switch state
@@ -26,7 +24,7 @@ void write_callback(Device *device, Param *param, const param_val_t val,
     const char *param_name = param->getParamName();
 
     if (strcmp(param_name, "Power") == 0) {
-        Serial.printf("Received value = %s for %s - %s\n",
+        Serial.printf("Value from rainmaker\nReceived value = %s for %s - %s\n",
                       val.val.b ? "true" : "false", device_name, param_name);
         Switch_state = val.val.b;
         powerComputer(Switch_state);
@@ -61,9 +59,9 @@ void sysProvEvent(arduino_event_t *sys_event)
 // Code for power relay control
 void powerComputer(int state)
 {
-    if (state == 0) { // turn off pc
+    if (state == 0 || state == 1) { // turn on/off pc
         Serial.printf("Turn on pc\n");
-        digitalWrite(PcSwitch, LOW);
+        digitalWrite(PcSwitch, (state) ? HIGH : LOW);
         digitalWrite(Relay, HIGH);
         delay(50);
         digitalWrite(Relay, LOW);
@@ -75,13 +73,6 @@ void powerComputer(int state)
         delay(4500);
         digitalWrite(Relay, LOW);
     }
-    else { // Turn on pc
-        Serial.printf("Turn off pc\n");
-        digitalWrite(PcSwitch, HIGH);
-        digitalWrite(Relay, HIGH);
-        delay(50);
-        digitalWrite(Relay, LOW);
-    }
 }
 
 void setup()
@@ -89,7 +80,6 @@ void setup()
     Serial.begin(115200);
     pinMode(PcSwitch, INPUT_PULLUP);
     pinMode(Relay, OUTPUT);
-    //digitalWrite(Relay, DEFAULT_POWER_MODE);
 
     //---------- ESP RainMaker initialisation ---------
         // node init
@@ -133,10 +123,10 @@ void setup()
 void loop()
 {
     if (digitalRead(PcSwitch) == LOW) {  // Push button pressed
-
         // Key debounce handling
         delay(100);
         int startTime = millis();
+        // Key hold handling
         while (digitalRead(PcSwitch) == LOW) {
             delay(50);
         }
@@ -148,15 +138,14 @@ void loop()
         } else if ((endTime - startTime) > 10000) { // Key pressed for more then 10secs rest wifi
             Serial.printf("Reset Wi-Fi.\n");
             RMakerWiFiReset(2);
-        } else if ((endTime - startTime) > 3000) { // Key pressed for more then 3secs force shutoff
+        } else if ((endTime - startTime) > 5000) { // Key pressed for more then 3secs force shutoff
             Serial.printf("Hard stop computer");
             powerComputer(2);
         } else { // Toggle between on and off state
             Switch_state = !Switch_state;
-            Serial.printf("Toggle State to %s.\n", Switch_state ? "true" : "false");
+            Serial.printf("Value from switch\nToggle State to %s.\n", Switch_state ? "true" : "false");
             if (my_switch) {
-                my_switch->updateAndReportParam(ESP_RMAKER_DEF_POWER_NAME,
-                                                Switch_state);
+                my_switch->updateAndReportParam(ESP_RMAKER_DEF_POWER_NAME,Switch_state);
             }
             powerComputer(Switch_state);
         }
