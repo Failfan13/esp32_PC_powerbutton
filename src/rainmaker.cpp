@@ -26,9 +26,14 @@ void write_callback(Device *device, Param *param, const param_val_t val,
     if (strcmp(param_name, "Power") == 0) {
         Serial.printf("Value from rainmaker\nReceived value = %s for %s - %s\n",
                       val.val.b ? "true" : "false", device_name, param_name);
-        Switch_state = val.val.b;
-        powerComputer(Switch_state);
-        param->updateAndReport(val);
+        if (val.val.b != Switch_state) {
+            Switch_state = val.val.b;
+            powerComputer(Switch_state);
+            param->updateAndReport(val);
+        }
+        else {
+            Serial.printf("The device could not be turned %d as it is already in that state\n", val.val.b);
+        }
     }
 }
 
@@ -59,19 +64,31 @@ void sysProvEvent(arduino_event_t *sys_event)
 // Code for power relay control
 void powerComputer(int state)
 {
-    if (state == 0 || state == 1) { // turn on/off pc
-        Serial.printf("Turn on pc\n");
-        digitalWrite(PcSwitch, (state) ? HIGH : LOW);
-        digitalWrite(Relay, HIGH);
-        delay(50);
-        digitalWrite(Relay, LOW);
-    }
-    else if (state == 2) { // force turn off pc
-        Serial.printf("Force off pc\n");
-        digitalWrite(PcSwitch, LOW);
-        digitalWrite(Relay, HIGH);
-        delay(4500);
-        digitalWrite(Relay, LOW);
+    switch (state) { 
+        case 0: // pc on
+            Serial.printf("Turn on pc\n");
+            digitalWrite(PcSwitch, (state) ? HIGH : LOW);
+            digitalWrite(Relay, HIGH);
+            delay(50);
+            digitalWrite(Relay, LOW);
+            delay(30000);
+            break;
+        case 1: // pc off
+            Serial.printf("Turn off pc\n");
+            digitalWrite(PcSwitch, (state) ? HIGH : LOW);
+            digitalWrite(Relay, HIGH);
+            delay(50);
+            digitalWrite(Relay, LOW);
+            break;
+        case 2: // force off pc
+            Serial.printf("Force off pc\n");
+            digitalWrite(PcSwitch, LOW);
+            digitalWrite(Relay, HIGH);
+            delay(4500);
+            digitalWrite(Relay, LOW);
+            break;
+        default:
+            break;
     }
 }
 
@@ -138,7 +155,7 @@ void loop()
         } else if ((endTime - startTime) > 10000) { // Key pressed for more then 10secs rest wifi
             Serial.printf("Reset Wi-Fi.\n");
             RMakerWiFiReset(2);
-        } else if ((endTime - startTime) > 5000) { // Key pressed for more then 3secs force shutoff
+        } else if ((endTime - startTime) > 3000) { // Key pressed for more then 3secs force shutoff
             Serial.printf("Hard stop computer");
             powerComputer(2);
         } else { // Toggle between on and off state
