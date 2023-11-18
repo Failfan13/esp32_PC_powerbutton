@@ -83,6 +83,7 @@ void powerComputer(int state)
             delay(4500);
             digitalWrite(Relay, LOW);
             Switch_state = false;
+            my_switch->updateAndReportParam(ESP_RMAKER_DEF_POWER_NAME,Switch_state);
             break;
         default:
             break;
